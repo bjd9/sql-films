@@ -1,0 +1,162 @@
+/*   ===   FOR SLIDE 1   ===   */
+
+WITH t1 AS(
+	SELECT SUM(p.amount) AS sum_basedon_rentalid,
+		r.inventory_id AS per_that_copy,
+		i.film_id AS film_id
+	FROM payment p
+	JOIN rental r
+	ON p.rental_id = r.rental_id
+	JOIN inventory i
+	ON r.inventory_id = i.inventory_id
+	GROUP BY 2,3)
+
+SELECT
+	f.title || ' (' || f.release_year || ')' AS film_name,
+	SUM(sum_basedon_rentalid) AS sum_basedon_film
+FROM t1
+JOIN film f
+ON f.film_id = t1.film_id
+GROUP BY 1
+/* EVALUATED LIST TO DETERMINE THE CUT OFF BELOW. DONE FOR RUNNING EFFICIENCY */
+HAVING SUM(sum_basedon_rentalid) > 166
+ORDER BY 2 DESC
+
+
+
+
+
+/*  ===  FOR SLIDE 2  ===  */
+
+WITH t1 AS(
+  	SELECT SUM(p.amount) AS sum_basedon_rentalid,
+  		r.inventory_id AS per_that_copy,
+  		i.film_id AS film_id
+  	FROM payment p
+  	JOIN rental r
+  	ON p.rental_id = r.rental_id
+  	JOIN inventory i
+  	ON r.inventory_id = i.inventory_id
+  	GROUP BY 2,3),
+
+  t2 AS(
+    SELECT SUM(sum_basedon_rentalid) AS sum_basedon_film,
+    	f.title || ' (' || f.release_year || ')' AS film_name,
+      t1.film_id AS film_id
+    FROM t1
+    JOIN film f
+    ON f.film_id = t1.film_id
+    GROUP BY 2, 3
+    /* EVALUATED LIST TO DETERMINE THE CUT OFF BELOW. DONE FOR RUNNING EFFICIENCY */
+    HAVING SUM(t1.sum_basedon_rentalid) > 166
+    ORDER BY 1 DESC
+  ),
+
+  t3 AS(
+    SELECT COUNT(i.film_id) AS copies_each_film,
+      t2.sum_basedon_film,
+	  i.film_id AS film_id
+    FROM inventory i
+	JOIN t2
+	ON t2.film_id = i.film_id
+    GROUP BY 2, 3
+  )
+
+
+SELECT
+  	t2.film_name,
+	(t2.sum_basedon_film / t3.copies_each_film) AS sum_per_copy
+FROM t2
+JOIN t3
+ON t2.film_id = t3.film_id
+GROUP BY 1,2
+ORDER BY 2 DESC
+
+
+
+
+/*  ===  FOR SLIDE 3  ===  */
+
+WITH
+/* RANKS CUSTOMERS IN TERMS OF TOTAL SPENT */
+  t1 AS (
+    SELECT
+      ROW_NUMBER() OVER (ORDER BY SUM(amount) DESC) AS rownum,
+      customer_id,
+      SUM(amount) AS totalamt_per_customer
+    FROM payment
+    GROUP BY 2
+    ORDER BY 3 DESC
+  ),
+/* ONLY TAKES THE TOP 9 FORWARD */
+  t2 AS (
+    SELECT *
+    FROM t1
+    WHERE rownum < 10
+  )
+
+  SELECT
+    first_name || ' ' || last_name AS full_name,
+	  p.customer_id,
+    DATE_TRUNC('month',p.payment_date),
+    SUM(p.amount),
+    COUNT(p.amount),
+	t2.totalamt_per_customer AS lifetime_spent
+  FROM payment p
+  JOIN t2
+  ON t2.customer_id = p.customer_id
+  JOIN customer c
+  ON p.customer_id = c.customer_id
+  WHERE t2.customer_id = p.customer_id
+  GROUP BY 1, 2, 3, 6
+  ORDER BY 6 DESC, 2, 3
+
+
+
+
+/*  ===  FOR SLIDE 4  ===  */
+
+WITH
+/* RANKS CUSTOMERS IN TERMS OF TOTAL SPENT */
+  t1 AS (
+    SELECT
+      ROW_NUMBER() OVER (ORDER BY SUM(amount) DESC) AS rownum,
+      customer_id,
+      SUM(amount) AS totalamt_per_customer
+    FROM payment
+    GROUP BY 2
+    ORDER BY 3 DESC
+  ),
+/* ONLY TAKES THE TOP 9 FORWARD */
+  t2 AS (
+    SELECT *
+    FROM t1
+    WHERE rownum < 10
+  ),
+  t3 as (
+    SELECT
+      first_name || ' ' || last_name AS full_name,
+      p.customer_id,
+      DATE_TRUNC('month',p.payment_date) AS mth_yr,
+      SUM(p.amount) AS mth_amt,
+      COUNT(p.amount) AS mth_count,
+    t2.totalamt_per_customer AS lifetime_spent
+    FROM payment p
+    JOIN t2
+    ON t2.customer_id = p.customer_id
+    JOIN customer c
+    ON p.customer_id = c.customer_id
+    WHERE t2.customer_id = p.customer_id
+    GROUP BY 1, 2, 3, 6
+    ORDER BY 6 DESC, 2, 3
+  )
+
+SELECT
+  t3.full_name,
+  t3.mth_yr,
+  t3.mth_amt,
+  LAG(t3.mth_amt) OVER (PARTITION BY t3.full_name ORDER BY t3.mth_yr) AS lag,
+  mth_amt - (LAG(t3.mth_amt) OVER (PARTITION BY t3.full_name ORDER BY t3.mth_yr)) AS difference,
+  t3.lifetime_spent
+FROM t3
+ORDER BY 6 DESC, 2
